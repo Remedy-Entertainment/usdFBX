@@ -4,7 +4,7 @@ This project is an `SdfFileFormat` plugin for [USD][USD_URL] to enable loading a
 
 MayaUSD is supported, but only a locally built version of MayaUSD has been tested so far. Using the USD libraries that come with published builds of MayaUSD should theoretically work; however, this is uncharted territory.
 
-The plugin is based on the Alembic example bundled with the USD sources so there are a lot of familiarities. In the future, this project will likely receive a refactor to simplify things quite a bit.
+The plugin is based on the Alembic example bundled with the USD sources so there are a lot of similarities. In the future, this project may receive a refactor to simplify things.
 
 # Capabilities and Limitations
 
@@ -13,10 +13,12 @@ The plugin is based on the Alembic example bundled with the USD sources so there
     - `FbxNodeAttribute::eMesh`
     - `FbxNodeAttribute::eSkeleton`
     - `FbxNodeAttribute::eCamera`
-2) Materials are not yet supported but is on the near future roadmap
-3) Custom FBX Properties convert into USD properties prefixed with the `userProperties:` property namespace. The `Custom` Metadatatum will also be set for these.
+2) Materials are not yet supported but are on the near future roadmap
+3) Custom FBX Properties convert into USD properties prefixed with the `userProperties:` property namespace. The `Custom` Metadatatum will also be set for these
 4) While access to the fileformat itself by USD is multithreaded, any dealings with the FBX SDK itself is single threaded at the moment
 5) Per bone animated properties are recorded to a set of custom properties onto a `UsdSkelAnim` prim
+6) The plugin does not and will not support any writing capabilities back into FBX from USD. Editing FBX data is recommended to be done on a new sublayer/edittarget
+7) All FBX scenes will be converted to Y-up, 0.01 metersPerUnit (cm)
 
 # Requirements
 
@@ -34,12 +36,6 @@ The plugin is based on the Alembic example bundled with the USD sources so there
 
 The project has been configured with CMAKE, configuration can be done via command line, CMAKE GUI or inside IDEs with integrated CMAKE support.
 
-Example CMAKE command in PowerShell
-
-```powershell
-cmake -B build -G "Visual Studio 17 2022" -T host=x64 -A x64 -DPXR_USD_LOCATION="C:\USD\23.05" -DADSK_FBX_LOCATION="C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.4" -DUSDFBX_BUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX="$(Resolve-Path .)\install"
-```
-
 The important CMAKE Variables to set are
 - `PXR_USD_LOCATION`: Root directory of the installed USD distribution
 - `ADSK_FBX_LOCATION`: Root Directory of the C++ FBX SDK
@@ -47,12 +43,29 @@ The important CMAKE Variables to set are
 - `SIDEFX_HDK_LOCATION`: Root Directory of the Houdini Development Kit. When setting this, a new target called `usdFbx_houdini` will be added
 
 ## Note on Python
-If USD was built with Python, and a python virtual environment was used (manually created, conda or pipenv for example), be sure to activate it prior to running CMAKE and also pass `-DPython_FIND_VIRTUALENV=ONLY` to minimize any issues with CMAKE's `FindPython`
+It is recommended to activate and use a Python Virtual Environment (venv, pipenv, conda, etc.) prior to running the CMAKE configuration. When doing so, it's best to pass  `-DPython_FIND_VIRTUALENV=ONLY` to the CMAKE command to minimize any issues with CMAKE's `FindPython`
 
 
 ## Note on `USDFBX_BUILD_TESTS`
 The configuration will check for the existence of `pytest` on current path. Therefor it is recommended to use a Python Virtual Environment ([pipenv](https://pypi.org/project/pipenv/) to make it easy) prior to configuring with this flag enabled.
 
+## Examples
+
+### Basic
+
+```powershell
+cmake -B build -G "Visual Studio 17 2022" -T host=x64 -A x64 -DPXR_USD_LOCATION="C:\USD\23.05" -DADSK_FBX_LOCATION="C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.4" -DCMAKE_INSTALL_PREFIX="$(Resolve-Path .)\install"
+```
+
+## Using Pipenv
+
+```powershell
+pipenv --python 3.9
+pipenv install pytest pytest-order python-dotenv pytest-mock
+pipenv install <PATH TO FBX SDK PYTHON PACKAGE>
+pipenv shell
+cmake -B build -G "Visual Studio 17 2022" -T host=x64 -A x64 -DPXR_USD_LOCATION="C:\USD\23.05" -DADSK_FBX_LOCATION="C:\Program Files\Autodesk\FBX\FBX SDK\2020.3.4" -DPython_FIND_VIRTUALENV=ONLY -DUSDFBX_BUILD_TESTS=ON -DCMAKE_INSTALL_PREFIX="$(Resolve-Path .)\install" 
+```
 
 # Running Tests
 Tests have been written in pytest and requires a Python environment with the following dependencies installed:
@@ -110,6 +123,9 @@ After this run `usdview <PATH TO LAYER>` where `<PATH TO LAYER>` points to for e
 
 > 📝 **NOTE**    
 If your build of USD has changed the plugin search environment variable, use that instead of `PXR_PLUGINPATH_NAME`!    
+
+> 📝 **WINDOWS ONLY**    
+Currently, the FBX SDK is dynamically linked, meaning that you must also add `<PATH TO INSTALLED USDFBX>` to your `PATH` environment variable! Not doing so will result in `moduleNotFound` errors.
 
 ![](example.png)
 

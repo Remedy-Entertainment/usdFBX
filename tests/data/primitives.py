@@ -221,11 +221,12 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
             mesh.points,
         )
         color_element = fbx_mesh.CreateElementVertexColor()
-        color_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByControlPoint)
-        color_element.SetReferenceMode(fbx.FbxLayerElement.EReferenceMode.eDirect)
-
+        color_element.SetName(color_set.name)
+        color_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByPolygonVertex)
+        color_element.SetReferenceMode(fbx.FbxLayerElement.EReferenceMode.eIndexToDirect)
+        color_set_coordinates = color_set.coordinates
         colors = [
-            fbx.FbxColor(*color_set.coordinates[id]) for id in color_set.point_mapping
+            fbx.FbxColor(*color_set_coordinates) for id in color_set.point_mapping
         ]
         write_layer_element(
             color_element,

@@ -74,8 +74,6 @@ namespace helpers
 			+ helpers::FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP.at( fbxChannelName ) ) );
 	}
 
-namespace helpers
-{
 	constexpr double MM_PER_INCH = 25.4;
 
 	template< typename T >
@@ -993,7 +991,7 @@ namespace
 			auto valueType = propertyConverter.getSdfTypeName();
 			auto defaultValue = propertyConverter.getValue();
 
-			const auto cleanedName = cleanName( fbxProperty.GetName().Buffer(), " _", remedy::FbxNameFixer() );
+			const auto cleanedName = remedy::cleanName( fbxProperty.GetName().Buffer() );
 			TfToken propertyName( "userProperties:" + cleanedName );
 			context.CreateProperty(
 				propertyName,
@@ -1791,7 +1789,7 @@ namespace
 			return;
 		}
 
-		const TfToken skelAnimationPrimName( std::string( "Animation" ) + fbxNode->GetName() );
+		const TfToken skelAnimationPrimName( std::string( "Animation" ) + remedy::cleanName( fbxNode->GetName() ) );
 
 		const auto parentPath = context.GetPath().GetParentPath();
 		const auto skelAnimPrimPath = parentPath.AppendChild( skelAnimationPrimName );
@@ -1978,7 +1976,15 @@ namespace
 
 		// Relationship to the skeleton
 		SdfPath pathToSkeleton( "/ROOT" );
-		pathToSkeleton = pathToSkeleton.AppendChild( TfToken( fbxNode->GetName() ) );
+		pathToSkeleton = pathToSkeleton.AppendChild( TfToken( remedy::cleanName( fbxNode->GetName() ) ) );
+		if( !context.GetPrimAtPath( pathToSkeleton ).has_value() )
+		{
+			TF_WARN(
+				"Unable to find a skeleton at path <%s>! SkelAnimation <%s> will remain unbound!\n",
+				pathToSkeleton.GetText(),
+				skelAnimPrimPath.GetText() );
+			return;
+		}
 		context.CreateRelationship(
 			pathToSkeleton.AppendProperty( UsdSkelTokens->skelAnimationSource ),
 			skelAnimPrimPath,
@@ -2004,7 +2010,7 @@ namespace
 
 		const auto pSkeleton = static_cast< const FbxSkeleton* >( fbxNode->GetNodeAttribute() );
 
-		const TfToken skeletonPrimName( fbxNode->GetName() );
+		const TfToken skeletonPrimName( remedy::cleanName( fbxNode->GetName() ) );
 
 		// Skip any child skeletons, they are handled when the first joint is
 		// encountered
@@ -2359,7 +2365,7 @@ remedy::FbxNodeReaderContext::Property& remedy::FbxNodeReaderContext::CreateRela
 	const SdfPath& to,
 	MetadataMap&& metadata )
 {
-	// SdfValueTypeNames and the defaultValue are just fill in values, they do not
+	// SdfValueTypeNames and the defaultValue are just fill in values, they do not matter in the end
 	// matter in the end
 	auto& prop
 		= CreateProperty( from, SdfValueTypeNames->Token, VtValue(), nullptr, std::move( metadata ), SdfVariabilityUniform );
@@ -2383,10 +2389,12 @@ remedy::FbxNodeReaderContext::Property& remedy::FbxNodeReaderContext::CreateConn
 	const SdfPath sourcePropertyPath = sourcePath.AppendProperty( sourceAttribute );
 	const SdfPath targetPropertyPath = targetPath.AppendProperty( targetAttribute );
 
-	auto& sourceProperty = CreateProperty( sourcePropertyPath, valueType, VtValue(), nullptr, MetadataMap( metadata ) );
+	auto& targetProperty = CreateProperty( targetPropertyPath, targetTypeName, VtValue(), nullptr, MetadataMap( metadata ) );
 	// copying metadata here, it's moved later
-	sourceProperty.metadata[ SdfFieldKeys->ConnectionPaths ] = VtValue( SdfPathListOp::Create( { targetPropertyPath } ) );
+	targetProperty.metadata[ SdfFieldKeys->ConnectionPaths ] = VtValue( SdfPathListOp::CreateExplicit( { sourcePropertyPath } ) );
+	targetProperty.hasConnection = true;
 
-	CreateProperty( sourcePropertyPath, targetTypeName, VtValue(), nullptr, std::move( metadata ) );
+	auto& sourceProperty = CreateProperty( sourcePropertyPath, targetTypeName, VtValue(), nullptr, std::move( metadata ) );
+	sourceProperty.hasConnection = true;
 	return sourceProperty;
 }

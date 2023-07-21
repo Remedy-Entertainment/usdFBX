@@ -726,8 +726,7 @@ namespace converters
 
 	TfToken skeletonToTokenPath( const FbxSkeleton* skeleton, TfToken rootJointName )
 	{
-		// Note: If perf is an issue with this, resort to some kind of caching
-		// mechanism.
+		// Note: If perf is an issue with this, resort to some kind of caching mechanism.
 		TfToken jointName( skeleton->GetNode()->GetName() );
 		if( jointName == rootJointName )
 		{
@@ -735,11 +734,21 @@ namespace converters
 		}
 
 		FbxNode* parent = skeleton->GetNode()->GetParent();
-		SdfPath jointPath = SdfPath( parent->GetName() ).AppendChild( jointName );
+		if( parent == nullptr )
+		{
+			return jointName;
+		}
+
+		SdfPath jointPath = SdfPath( remedy::cleanName( parent->GetName() ) )
+								.AppendChild( TfToken( remedy::cleanName( jointName.GetString() ) ) );
 		while( parent->GetName() != rootJointName )
 		{
 			parent = parent->GetParent();
-			jointPath = SdfPath( parent->GetName() ).AppendPath( jointPath );
+			if( parent == nullptr )
+			{
+				break;
+			}
+			jointPath = SdfPath( remedy::cleanName( parent->GetName() ) ).AppendPath( jointPath );
 		}
 		return jointPath.GetAsToken();
 	}

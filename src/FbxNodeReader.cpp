@@ -1755,7 +1755,7 @@ namespace
 
 		if( vecMaterials.size() == 1 )
 		{
-			context.CreateRelationship( UsdShadeTokens->materialBinding, vecMaterials[0] );
+			context.CreateRelationship( UsdShadeTokens->materialBinding, vecMaterials[ 0 ] );
 		}
 
 		if( !apiSchemas.empty() )

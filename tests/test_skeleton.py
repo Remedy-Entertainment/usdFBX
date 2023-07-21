@@ -1,10 +1,13 @@
-from re import A
+import string
+from typing import List
+
 import pytest
+
 import FbxCommon as fbx
-from pxr import Usd, UsdGeom, Gf, UsdSkel, Sdf
+
+from pxr import Usd, UsdGeom, UsdSkel, Sdf, Gf
 from data import (
     Joint,
-    MappedCoordinates,
     Mesh,
     SkinBinding,
     TransformableNode,
@@ -13,7 +16,6 @@ from data import (
     Property,
     AnimationCurve,
 )
-from typing import List
 
 
 def validate_skeleton(cache, prim, nodes: List[Joint]):
@@ -27,6 +29,7 @@ def validate_skeleton(cache, prim, nodes: List[Joint]):
 
     topology = query.GetTopology()
     joint_order = query.GetJointOrder()
+    joint_local_xforms = query.ComputeJointLocalTransforms(Usd.TimeCode.Default())
     for i in range(len(topology)):
         name = Sdf.Path(joint_order[i]).name
         parent = topology.GetParent(i)
@@ -45,19 +48,25 @@ def validate_skeleton(cache, prim, nodes: List[Joint]):
             else None
         )
 
-        # TODO: Check transforms
         assert parent_name == validation_parent_name
+
+        transform = validation_object.transform
+        assert joint_local_xforms[i].ExtractTranslation() == transform.t
+        # This assumes xyz rotation order
+        decomposed_rot = joint_local_xforms[i].ExtractRotation().Decompose(Gf.Vec3d.XAxis(), Gf.Vec3d.YAxis(), Gf.Vec3d.ZAxis())
+        assert Gf.IsClose(decomposed_rot, transform.r, 0.0001)
 
 
 @pytest.fixture
 def simple_skeleton_fbx(fbx_defaults):
     output_dir, manager, scene, fbx_file_format = fbx_defaults
     t = (0.0, 40.0, 0.0)
+    r = (90, 0, 0)
     with scenebuilder.SceneBuilder(manager, scene, output_dir) as builder:
         builder.settings.file_format = fbx_file_format
         root_node = Joint(name="root", is_root=True)
-        child_1 = Joint(name="child_1", parent=root_node, transform=Transform(t=t))
-        child_2 = Joint(name="child_2", parent=child_1, transform=Transform(t=t))
+        child_1 = Joint(name="child_1", parent=root_node, transform=Transform(t=t, r=r))
+        child_2 = Joint(name="child_2", parent=child_1, transform=Transform(t=t, r=r))
         builder.nodes.extend([root_node, child_1, child_2])
     yield str(builder.settings.file_path), builder.nodes
 
@@ -356,3 +365,35 @@ def test_animated_bone_properties(animated_bone_properties_fbx, root_prim_name):
     owner_attr = anim_prim.GetAttribute(f"{prop_name}:owner")
     assert owner_attr
     assert owner_attr.Get() == owners
+
+
+# NOTE: This could be moved to test_skeleton.py
+@pytest.fixture(
+    params=[(f"child{c}", "child_") for c in string.punctuation + string.whitespace]
+)
+def simple_skeleton_dirty_names_fbx(fbx_defaults, request):
+    output_dir, manager, scene, fbx_file_format = fbx_defaults
+    input_name, expected_name = request.param
+    with scenebuilder.SceneBuilder(manager, scene, output_dir) as builder:
+        builder.settings.file_format = fbx_file_format
+        root_node = Joint(name="root", is_root=True)
+        child_1 = Joint(name=f"{input_name}1", parent=root_node)
+        child_2 = Joint(name=f"{input_name}2", parent=child_1)
+        builder.nodes.extend([root_node, child_1, child_2])
+    yield str(builder.settings.file_path), builder.nodes, (
+        "root",
+        f"root/{expected_name}1",
+        f"root/{expected_name}1/{expected_name}2",
+    )
+
+
+def test_skeletonCleanedNames(simple_skeleton_dirty_names_fbx, root_prim_name):
+    file_path, nodes, expected_topology = simple_skeleton_dirty_names_fbx
+    stage = Usd.Stage.Open(file_path)
+
+    skel = UsdSkel.Skeleton(stage.GetPrimAtPath(f"/{root_prim_name}/root"))
+    cache = UsdSkel.Cache()
+    query = cache.GetSkelQuery(skel)
+
+    joint_order = query.GetJointOrder()
+    assert joint_order == expected_topology

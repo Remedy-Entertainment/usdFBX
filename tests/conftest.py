@@ -21,6 +21,10 @@ from helpers import create_FbxTime
 def root_prim_name():
     yield "ROOT"
 
+@pytest.fixture
+def mat_scope_name():
+    yield "MATERIALS"
+
 
 @pytest.fixture(
     params=[

@@ -1,5 +1,4 @@
 // Copyright (C) Remedy Entertainment Plc.
-
 #pragma once
 
 #include <pxr/base/tf/token.h>
@@ -50,6 +49,7 @@ namespace remedy
 		/// Property cache.
 		struct Property
 		{
+			bool hasConnection = false;
 			SdfValueTypeName typeName = SdfValueTypeNames->Token;
 			MetadataMap metadata = {};
 			std::vector< std::tuple< UsdTimeCode, VtValue > > timeSamples = {};

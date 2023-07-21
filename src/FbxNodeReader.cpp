@@ -15,12 +15,12 @@ IGNORE_USD_WARNINGS
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdr/shaderProperty.h>
 #include <pxr/usd/usd/tokens.h>
+#include <pxr/usd/usdGeom/subset.h>
+#include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformOp.h>
-#include <pxr/usd/usdgeom/subset.h>
-#include <pxr/usd/usdgeom/tokens.h>
-#include <pxr/usd/usdshade/tokens.h>
-#include <pxr/usd/usdskel/tokens.h>
-#include <pxr/usd/usdskel/utils.h>
+#include <pxr/usd/usdShade/tokens.h>
+#include <pxr/usd/usdSkel/tokens.h>
+#include <pxr/usd/usdSkel/utils.h>
 
 DIAGNOSTIC_POP
 

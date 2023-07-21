@@ -53,13 +53,14 @@
 // 4127: conditional expression is constant
 // 4201: nonstandard extension used : nameless struct/union
 // 4244: 'argument' : conversion from 'type1' to 'type2', possible loss of data
-// 4244: non - DLL - interface class 'class_1' used as base for DLL - interface
-// class 'class_2' 4245: 'initializing': conversion from 'int' to 'size_t',
-// signed/unsigned mismatch 4265: class has virtual functions, but destructor is
-// not virtual 4305: 'context' : truncation from 'type1' to 'type2' 4619:
-// #pragma warning : there is no warning number 'number'
+// 4244: non - DLL - interface class 'class_1' used as base for DLL - interface class 'class_2'
+// 4245: 'initializing': conversion from 'int' to 'size_t', signed/unsigned mismatch
+// 4265: class has virtual functions, but destructor is not virtual
+// 4305: 'context' : truncation from 'type1' to 'type2'
+// 4619: #pragma warning : there is no warning number 'number'
+// 4100: unreferenced formal parameter
 #define IGNORE_USD_WARNINGS
-DIAGNOSTIC_MSVC_IGNORE( 4003 4127 4201 4244 4245 4265 4267 4275 4305 4619 );
+DIAGNOSTIC_MSVC_IGNORE( 4003 4127 4201 4244 4245 4265 4267 4275 4305 4619 4100 );
 
 #elif defined( GCC )
 #define DO_PRAGMA( x ) _Pragma( #x )

@@ -12,6 +12,9 @@ UsdFbxDataReader.cpp
 UsdFbxFileformat.cpp)
 
 set(PLUGINFO_FILENAME "plugInfo.json")
+set(USDFBX_VERSION "1.1.0")
+
+file(WRITE "VERSION" "USDFBX_VERSION_STRINGIFY( ${USDFBX_VERSION} )")
 
 # BASIC MODULE
 # ------------

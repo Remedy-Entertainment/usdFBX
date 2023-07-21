@@ -9,50 +9,24 @@ PXR_NAMESPACE_USING_DIRECTIVE
 
 namespace remedy
 {
-	struct FbxNameFixer
+	inline std::string cleanName( const std::string& inName, const char* trimLeading, const std::set< std::string >& usedNames )
 	{
-		std::string operator()( const std::string& x ) const
-		{
-			return TfMakeValidIdentifier( x );
-		}
-	};
-
-	template< class T >
-	std::string cleanName(
-		const std::string& inName,
-		const char* trimLeading,
-		const std::set< std::string >& usedNames,
-		T fixer,
-		bool ( *test )( const std::string& ) = &SdfPath::IsValidIdentifier )
-	{
-		if( test( inName ) )
+		if( SdfPath::IsValidIdentifier( inName ) )
 		{
 			return { inName };
 		}
 
-		// Mangle name into desired form.
-		// Handle empty name.
-		std::string name = inName;
-		if( name.empty() )
+		if( inName.empty() )
 		{
-			name = '_';
-		}
-		else
-		{
-			// Trim leading.
-			name = TfStringTrimLeft( name, trimLeading );
-
-			// If name is not a valid identifier then substitute characters.
-			if( !test( name ) )
-			{
-				name = fixer( name );
-			}
+			return { '_' };
 		}
 
-		// Now check against usedNames.
+		std::string name = TfStringTrimLeft( inName, trimLeading );
+		name = TfMakeValidIdentifier( name );
+
+		// If the input had already been sanitized, we output the same sanitized name suffixed by an integer
 		if( usedNames.find( name ) != usedNames.end() )
 		{
-			// Just number the tries.
 			int i = 0;
 			std::string attempt = TfStringPrintf( "%s_%d", name.c_str(), ++i );
 			while( usedNames.find( attempt ) != usedNames.end() )
@@ -61,13 +35,21 @@ namespace remedy
 			}
 			name = attempt;
 		}
-
 		return name;
 	}
 
-	template< class T >
-	std::string cleanName( const std::string& inName, const char* trimLeading, T fixer )
+	inline std::string cleanName( const std::string& inName )
 	{
-		return cleanName( inName, trimLeading, {}, fixer );
+		return cleanName( inName, " _", {} );
+	}
+
+	inline std::string cleanName( const std::string& inName, const char* trimLeading )
+	{
+		return cleanName( inName, trimLeading, {} );
+	}
+
+	inline std::string cleanName( const std::string& inName, const std::set< std::string >& usedNames )
+	{
+		return cleanName( inName, " _", usedNames );
 	}
 } // namespace remedy

@@ -1400,8 +1400,14 @@ namespace
 				VtValue( std::move( prop.values ) ),
 				{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->user ),
 				  { SdfFieldKeys->Custom, VtValue( true ) } } );
-			usdProp.timeSamples
-				= std::vector< std::tuple< UsdTimeCode, VtValue > >( prop.timeSamples.begin(), prop.timeSamples.end() );
+			for( const auto& timeSample : prop.timeSamples )
+			{
+				UsdTimeCode t = timeSample.first;
+				for( const VtValue& value : timeSample.second )
+				{
+					usdProp.timeSamples.push_back(std::make_pair(t, value));
+				}
+			}
 
 			// add special property to indicate this custom property's owner (joint
 			// path)

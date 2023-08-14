@@ -1405,7 +1405,7 @@ namespace
 				UsdTimeCode t = timeSample.first;
 				for( const VtValue& value : timeSample.second )
 				{
-					usdProp.timeSamples.push_back(std::make_pair(t, value));
+					usdProp.timeSamples.emplace_back(t, value);
 				}
 			}
 

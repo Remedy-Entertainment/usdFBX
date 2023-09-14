@@ -108,6 +108,19 @@ if(DEFINED Houdini_FOUND)
             target_link_libraries(${TARGET_NAME_HOUDINI} Houdini::Dep::${extra_dep})
         endforeach()
     endif()
+
+    if(APPLE)
+        # fbxsdk is not linked to the Houdini framework, so link it manually.
+        # Same thing with Python.
+        add_library( Houdini::Dep::fbxsdk SHARED IMPORTED )
+        set_target_properties(
+            Houdini::Dep::fbxsdk
+            PROPERTIES
+                IMPORTED_LOCATION ${_houdini_install_root}/Frameworks/Houdini.framework/Libraries/libfbxsdk.dylib
+        )
+        target_link_libraries(${TARGET_NAME_HOUDINI} "-framework Python" Houdini::Dep::fbxsdk)
+    endif()
+
     target_precompile_headers(${TARGET_NAME_HOUDINI}
         PRIVATE
         PrecompiledHeader.h

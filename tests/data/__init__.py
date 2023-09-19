@@ -159,12 +159,14 @@ class MappedCoordinates(Node):
             tuple(self.coordinates) + tuple(self.point_mapping)
         )
 
+
 @dataclass
-class TextureChannel():
+class TextureChannel:
     path: pathlib.Path = ""
     channel: str = ""
     name: str = "My Texture"
     uv_set: str = "default"
+
 
 @dataclass
 class LambertMaterial:
@@ -185,7 +187,8 @@ class LambertMaterial:
     displacement_factor: float = 0.0
     vector_displacement: Vec3_t = (0.0, 0.0, 0.0)
     vector_displacement_factor: float = 0.0
-    
+
+
 @dataclass
 class PhongMaterial(LambertMaterial):
     specular: Vec3_t = (0.0, 0.0, 0.0)
@@ -212,7 +215,9 @@ class Mesh(TransformableNode):
         fbx.FbxLayerElement.EReferenceMode.eIndexToDirect
     )
     skinbinding: Tuple[SkinBinding, ...] = ()
-    materials: List[Tuple[Union[LambertMaterial, PhongMaterial], int]] = field(default_factory=list)
+    materials: List[Tuple[Union[LambertMaterial, PhongMaterial], int]] = field(
+        default_factory=list
+    )
 
     # Necessary so we can use Mesh instances as keys in dicts
     def __hash__(self):

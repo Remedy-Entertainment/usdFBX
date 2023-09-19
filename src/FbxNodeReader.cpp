@@ -222,9 +222,9 @@ namespace helpers
 				// no out of the box 16bit integers in Usd, so we cast to 32bit instead
 				return VtValue( static_cast< uint32_t >( fbxProperty->Get< FbxUShort >() ) );
 			case eFbxLongLong:
-				return VtValue( fbxProperty->Get< int64_t >() );
+				return VtValue( static_cast< int64_t >( fbxProperty->Get< FbxLongLong >() ) );
 			case eFbxULongLong:
-				return VtValue( fbxProperty->Get< uint64_t >() );
+				return VtValue( static_cast< uint64_t >( fbxProperty->Get< FbxULongLong >() ) );
 			case eFbxHalfFloat:
 				return VtValue( GfHalf( fbxProperty->Get< FbxHalfFloat >().value() ) );
 			case eFbxBool:

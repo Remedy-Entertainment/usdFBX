@@ -191,11 +191,11 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
             fbx_texture = fbx.FbxFileTexture.Create(manager, "")
             fbx_texture.SetFileName(str(texture.path))
             fbx_texture.SetName(texture.name)
-            fbx_texture.SetTextureUse(fbx.FbxTexture.eStandard)
-            fbx_texture.SetMappingType(fbx.FbxTexture.eUV)
-            fbx_texture.SetMaterialUse(fbx.FbxFileTexture.eModelMaterial)
+            fbx_texture.SetTextureUse(fbx.FbxTexture.ETextureUse.eStandard)
+            fbx_texture.SetMappingType(fbx.FbxTexture.EMappingType.eUV)
+            fbx_texture.SetMaterialUse(fbx.FbxFileTexture.EMaterialUse.eModelMaterial)
             fbx_texture.SetSwapUV(False)
-            fbx_texture.SetAlphaSource(fbx.FbxTexture.eNone)
+            fbx_texture.SetAlphaSource(fbx.FbxTexture.EAlphaSource.eNone)
             fbx_texture.SetTranslation(0.0, 0.0)
             fbx_texture.SetScale(1.0, 1.0)
             fbx_texture.SetRotation(0.0, 0.0)
@@ -207,7 +207,7 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
     write_layer_element(
         material_element,
         [],  # Direct Array for material elements aren't used anymore
-        fbx.FbxLayerElement.eIndexToDirect,
+        fbx.FbxLayerElement.EReferenceMode.eIndexToDirect,
         material_mapping,
     )
 
@@ -223,11 +223,10 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
         color_element = fbx_mesh.CreateElementVertexColor()
         color_element.SetName(color_set.name)
         color_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByPolygonVertex)
-        color_element.SetReferenceMode(fbx.FbxLayerElement.EReferenceMode.eIndexToDirect)
-        color_set_coordinates = color_set.coordinates
-        colors = [
-            fbx.FbxColor(*color_set_coordinates) for id in color_set.point_mapping
-        ]
+        color_element.SetReferenceMode(
+            fbx.FbxLayerElement.EReferenceMode.eIndexToDirect
+        )
+        colors = [fbx.FbxColor(*c) for c in color_set.coordinates]
         write_layer_element(
             color_element,
             colors,

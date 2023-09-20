@@ -8,7 +8,13 @@
 #include <iosfwd>
 #include <string>
 
-#define USDFBX_FILE_FORMAT_TOKENS ( ( Id, "fbx" ) )( ( Version, "1.0.0" ) )( ( Target, "usd" ) )
+#define USDFBX_VERSION_STRINGIFY( x ) #x
+constexpr const char* USDFBX_VERSION = {
+#include "VERSION"
+};
+#undef USDFBX_VERSION_STRINGIFY
+
+#define USDFBX_FILE_FORMAT_TOKENS ( ( Id, "fbx" ) )( ( Version, USDFBX_VERSION ) )( ( Target, "usd" ) )
 PXR_NAMESPACE_USING_DIRECTIVE
 
 TF_DECLARE_PUBLIC_TOKENS( UsdFbxFileFormatTokens, USDFBX_FILE_FORMAT_TOKENS );

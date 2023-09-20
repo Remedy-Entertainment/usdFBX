@@ -154,7 +154,7 @@ namespace
 			val = std::get< 1 >( *it );
 		}
 
-		if( fieldName == SdfFieldKeys->Default )
+		if( fieldName == SdfFieldKeys->Default && !prop->hasConnection )
 		{
 			return getPropertyValue( prop, value );
 		}
@@ -364,9 +364,7 @@ namespace
 			usedNames.insert( node->GetChild( static_cast< int >( i ) )->GetName() );
 		}
 
-		const std::string name
-			= remedy::cleanName( node->GetName(), " _", usedNames, remedy::FbxNameFixer(), &SdfPath::IsValidIdentifier );
-
+		const std::string name = remedy::cleanName( node->GetName(), usedNames );
 		if( name.empty() )
 		{
 			TF_WARN( "Encountered empty FBX Node name, unable to continue" );
@@ -381,7 +379,7 @@ namespace
 		}
 
 		// Special case for dealing with skeletal data due to how Usd skeletons are
-		// supposed to look. We halt here and assume the reader has created the
+		// supposed to look in USDSkel. We halt here and assume the reader has created the
 		// correct prims for us
 		if( node->GetNodeAttribute()->GetAttributeType() == FbxNodeAttribute::eSkeleton )
 		{
@@ -541,14 +539,20 @@ bool remedy::UsdFbxDataReader::Open( const std::string& filePath, const SdfFileF
 		"UsdFbx - Converting from %f to %f metersPerUnit\n",
 		scene->GetGlobalSettings().GetSystemUnit().GetConversionFactorTo( FbxSystemUnit::m ),
 		FbxSystemUnit::cm.GetConversionFactorTo( FbxSystemUnit::m ) );
-	// TODO: Deprecated, this conversion factor is not needed any longer.
 	const auto conversionFactorToCm = FbxSystemUnit::cm.GetConversionFactorFrom( scene->GetGlobalSettings().GetSystemUnit() );
 	TF_DEBUG( USDFBX ).Msg(
 		"UsdFbx - Current System Units -> %s\n",
 		scene->GetGlobalSettings().GetSystemUnit().GetScaleFactorAsString( false ).Buffer() );
 	TF_DEBUG( USDFBX ).Msg(
+		"UsdFbx - CurrentSystemUnit GetConversionFactorFrom cm -> %f\n",
+		scene->GetGlobalSettings().GetSystemUnit().GetConversionFactorFrom( FbxSystemUnit::cm ) );
+	TF_DEBUG( USDFBX ).Msg(
 		"UsdFbx - CurrentSystemUnit GetConversionFactorTo cm -> %f\n",
 		scene->GetGlobalSettings().GetSystemUnit().GetConversionFactorTo( FbxSystemUnit::cm ) );
+	TF_DEBUG( USDFBX ).Msg(
+		"UsdFbx - conversion factor used for geometry data "
+		"using ScaleFactor -> %f\n",
+		conversionFactorToCm );
 	FbxSystemUnit::cm.ConvertScene( scene.get() );
 	const auto conversionFactorToMeter = scene->GetGlobalSettings().GetSystemUnit().GetConversionFactorTo( FbxSystemUnit::m );
 	TF_DEBUG( USDFBX ).Msg( "UsdFbx - new metersPerUnit: %f\n", conversionFactorToMeter );

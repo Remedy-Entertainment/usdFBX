@@ -8,7 +8,6 @@
 #include "Tokens.h"
 
 #include <algorithm>
-#include <numeric>
 #include <utility>
 
 DIAGNOSTIC_PUSH
@@ -16,8 +15,10 @@ IGNORE_USD_WARNINGS
 #include <pxr/usd/sdf/schema.h>
 #include <pxr/usd/sdr/shaderProperty.h>
 #include <pxr/usd/usd/tokens.h>
+#include <pxr/usd/usdGeom/subset.h>
 #include <pxr/usd/usdGeom/tokens.h>
 #include <pxr/usd/usdGeom/xformOp.h>
+#include <pxr/usd/usdShade/tokens.h>
 #include <pxr/usd/usdSkel/tokens.h>
 #include <pxr/usd/usdSkel/utils.h>
 
@@ -32,8 +33,47 @@ namespace boost = hboost;
 
 #include <fbxsdk.h>
 
+// Copied from primvars.cpp as this prefix is not exposed publicly but we would need something like it
+TF_DEFINE_PRIVATE_TOKENS(
+	_PRIVATE_TOKENS,
+	( ( primvarsPrefix, "primvars:" ) )( ( usdUvTexture, "UsdUVTexture" ) )( ( primvarReaderFloat2, "UsdPrimvarReader_float2" ) )(
+		( usdPreviewSurface, "UsdPreviewSurface" ) ) );
+
 namespace helpers
 {
+	const static std::map< std::string, std::string > FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP = {
+		// Lambert Specific
+		{ FbxSurfaceMaterial::sDiffuse, "diffuseColor" },
+		// { FbxSurfaceMaterial::sDiffuseFactor , ""},
+		{ FbxSurfaceMaterial::sEmissive, "emissiveColor" },
+		// { FbxSurfaceMaterial::sEmissiveFactor  , ""},
+		// {FbxSurfaceMaterial::sAmbient , ""},
+		// {FbxSurfaceMaterial::sAmbientFactor , ""},
+		{ FbxSurfaceMaterial::sNormalMap, "normal" },
+		// { FbxSurfaceMaterial::sBump , ""},
+		// { FbxSurfaceMaterial::sBumpFactor , ""},
+		{ FbxSurfaceMaterial::sTransparentColor, "opacity" },
+		// {FbxSurfaceMaterial::sTransparencyFactor , ""},
+		{ FbxSurfaceMaterial::sDisplacementColor, "displacement" },
+		// { FbxSurfaceMaterial::sDisplacementFactor , ""},
+		// { FbxSurfaceMaterial::sVectorDisplacementColor , ""},
+		// { FbxSurfaceMaterial::sVectorDisplacementFactor , ""},
+		// Phong Specific
+		{ FbxSurfaceMaterial::sSpecular, "specularColor" },
+		// { FbxSurfaceMaterial::sSpecularFactor , ""},
+		{ FbxSurfaceMaterial::sShininess, "roughness" },
+		{ FbxSurfaceMaterial::sReflection, "metallic" }, // This may not map properly as we'd be going from Color to float
+														 // { FbxSurfaceMaterial::sReflectionFactor , ""},
+
+	};
+
+	SdfPath getShaderInputPath( const SdfPath& shaderPath, const char* fbxChannelName )
+	{
+		return shaderPath.AppendProperty( TfToken(
+			UsdShadeTokens->inputs.GetString()
+			+ helpers::FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP.at( fbxChannelName ) ) );
+	}
+
 	constexpr double MM_PER_INCH = 25.4;
 
 	template< typename T >
@@ -618,63 +658,56 @@ namespace converters
 		return faceVertexCounts;
 	}
 
-	VtVec3fArray meshVertexColors( const FbxNode* node )
+	std::vector< std::pair< std::string, VtVec3fArray > > meshVertexColors( const FbxNode* node, VtIntArray faceVertexIndices )
 	{
-		VtVec3fArray colors;
 		const auto pMesh = static_cast< const FbxMesh* >( node->GetNodeAttribute() );
+		std::vector< std::pair< std::string, VtVec3fArray > > colorSetInfo;
 
-		const FbxLayerElementVertexColor* perPolygonVertexColors = nullptr;
 		for( int i = 0; i < pMesh->GetLayerCount(); ++i )
 		{
+			VtVec3fArray colors;
+			const FbxLayerElementVertexColor* perPolygonVertexColors = nullptr;
 			const auto layer = pMesh->GetLayer( i );
-			if( const auto vertexColorsElement = layer->GetVertexColors() )
+			const auto vertexColorsElement = layer->GetVertexColors();
+
+			if( !vertexColorsElement
+				|| ( vertexColorsElement->GetMappingMode() != FbxLayerElement::eByPolygonVertex
+					 && vertexColorsElement->GetReferenceMode() != FbxLayerElement::eIndex ) )
 			{
-				if( vertexColorsElement->GetMappingMode() != FbxLayerElement::eByControlPoint
-					&& vertexColorsElement->GetReferenceMode() != FbxLayerElement::eIndex )
-				{
-					continue;
-				}
-				perPolygonVertexColors = vertexColorsElement;
+				continue;
 			}
-		}
+			perPolygonVertexColors = vertexColorsElement;
 
-		if( !perPolygonVertexColors )
-		{
-			return colors;
+			// Parse and convert
+			for( int j = 0; j != pMesh->GetControlPointsCount(); ++j )
+			{
+				//Fetching color value based on the face vertex index to map the color to right vertex.
+				FbxColor color = perPolygonVertexColors->GetDirectArray().GetAt( faceVertexIndices[ j ] );
+				colors.push_back( GfVec3f(
+					static_cast< float >( color.mRed ),
+					static_cast< float >( color.mGreen ),
+					static_cast< float >( color.mBlue ) ) );
+			}
+			colorSetInfo.push_back( std::pair( remedy::cleanName( vertexColorsElement->GetName() ), colors ) );
 		}
-
-		// Parse and convert
-		for( int i = 0; i != pMesh->GetControlPointsCount(); ++i )
-		{
-			FbxColor color = perPolygonVertexColors->GetDirectArray().GetAt( i );
-			colors.push_back( GfVec3f(
-				static_cast< float >( color.mRed ),
-				static_cast< float >( color.mGreen ),
-				static_cast< float >( color.mBlue ) ) );
-		}
-
-		return colors;
+		return colorSetInfo;
 	}
 
-	VtVec2fArray meshTexCoords( const FbxNode* node, int layerIndex )
+	VtVec2fArray meshTexCoords( const FbxMesh* mesh, const FbxLayerElementUV* uvLayerElement )
 	{
 		VtVec2fArray texCoords;
 
-		const auto pMesh = static_cast< const FbxMesh* >( node->GetNodeAttribute() );
-		const auto uvLayerElement = pMesh->GetLayer( layerIndex )->GetUVs();
-
 		// Parse and convert
 		int currentIndex = 0;
-		for( int polygonIndex = 0; polygonIndex != pMesh->GetPolygonCount(); ++polygonIndex )
+		for( int polygonIndex = 0; polygonIndex != mesh->GetPolygonCount(); ++polygonIndex )
 		{
-			for( int polygonVertex = 0; polygonVertex != pMesh->GetPolygonSize( polygonIndex ); ++polygonVertex )
+			for( int polygonVertex = 0; polygonVertex != mesh->GetPolygonSize( polygonIndex ); ++polygonVertex )
 			{
 				FbxVector2 uv = helpers::getAtVertexIndex( uvLayerElement, currentIndex );
 				texCoords.push_back( GfVec2f( static_cast< float >( uv[ 0 ] ), static_cast< float >( uv[ 1 ] ) ) );
 				++currentIndex;
 			}
 		}
-
 		return texCoords;
 	}
 
@@ -726,8 +759,7 @@ namespace converters
 
 	TfToken skeletonToTokenPath( const FbxSkeleton* skeleton, TfToken rootJointName )
 	{
-		// Note: If perf is an issue with this, resort to some kind of caching
-		// mechanism.
+		// Note: If perf is an issue with this, resort to some kind of caching mechanism.
 		TfToken jointName( skeleton->GetNode()->GetName() );
 		if( jointName == rootJointName )
 		{
@@ -735,11 +767,21 @@ namespace converters
 		}
 
 		FbxNode* parent = skeleton->GetNode()->GetParent();
-		SdfPath jointPath = SdfPath( parent->GetName() ).AppendChild( jointName );
+		if( parent == nullptr )
+		{
+			return jointName;
+		}
+
+		SdfPath jointPath = SdfPath( remedy::cleanName( parent->GetName() ) )
+								.AppendChild( TfToken( remedy::cleanName( jointName.GetString() ) ) );
 		while( parent->GetName() != rootJointName )
 		{
 			parent = parent->GetParent();
-			jointPath = SdfPath( parent->GetName() ).AppendPath( jointPath );
+			if( parent == nullptr )
+			{
+				break;
+			}
+			jointPath = SdfPath( remedy::cleanName( parent->GetName() ) ).AppendPath( jointPath );
 		}
 		return jointPath.GetAsToken();
 	}
@@ -949,7 +991,7 @@ namespace
 			auto valueType = propertyConverter.getSdfTypeName();
 			auto defaultValue = propertyConverter.getValue();
 
-			const auto cleanedName = cleanName( fbxProperty.GetName().Buffer(), " _", remedy::FbxNameFixer() );
+			const auto cleanedName = remedy::cleanName( fbxProperty.GetName().Buffer() );
 			TfToken propertyName( "userProperties:" + cleanedName );
 			context.CreateProperty(
 				propertyName,
@@ -1033,16 +1075,509 @@ namespace
 			  { SdfFieldKeys->Custom, VtValue( true ) } } );
 	}
 
+	std::vector< std::pair< FbxTexture*, const std::string > > readTextureFromMaterial( const FbxSurfaceMaterial* material )
+	{
+		std::string textureFilePath = "";
+		std::vector< std::pair< FbxTexture*, const std::string > > result;
+
+		for( int textureIndex = 0; textureIndex < FbxLayerElement::sTypeTextureCount; ++textureIndex )
+		{
+			std::string targetTextureChannel( FbxLayerElement::sTextureChannelNames[ textureIndex ] );
+			FbxProperty fbxProperty = material->FindProperty( targetTextureChannel.c_str() );
+
+			if( !fbxProperty.IsValid() )
+			{
+				continue;
+			}
+			int texCount = fbxProperty.GetSrcObjectCount< FbxTexture >();
+			if( !texCount )
+			{
+				continue;
+			}
+
+			for( int i = 0; i < texCount; ++i )
+			{
+				auto* layeredTexture = fbxProperty.GetSrcObject< FbxLayeredTexture >( i );
+				FbxString propertyName = fbxProperty.GetName();
+				if( layeredTexture )
+				{
+					TF_WARN( "Layered Textures are currently unsupported!" );
+				}
+				else
+				{
+					FbxTexture* texture = fbxProperty.GetSrcObject< FbxTexture >( i );
+					result.push_back( std::pair{ texture, targetTextureChannel } );
+				}
+			}
+		}
+		return result;
+	}
+
+	SdfPath createUsdShadeShader(
+		remedy::FbxNodeReaderContext& context,
+		const TfToken shaderName,
+		const SdfPath& materialPath,
+		const TfToken& infoIdValue )
+	{
+		const SdfPath& shaderPath = materialPath.AppendChild( shaderName );
+		remedy::FbxNodeReaderContext::Prim& shaderPrim = context.AddPrim( shaderPath );
+		context.GetPrimAtPath( materialPath ).value()->children.push_back( shaderName );
+		shaderPrim.typeName = UsdFbxPrimTypeNames->Shader;
+		shaderPrim.specifier = SdfSpecifierDef;
+		const SdfPath& previewSurfacePropertyPath = shaderPath.AppendProperty( UsdShadeTokens->infoId );
+
+		context.CreateUniformProperty(
+			previewSurfacePropertyPath,
+			SdfValueTypeNames->Token,
+			VtValue( infoIdValue ),
+			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->shading ) } );
+		return shaderPath;
+	}
+
+	void connectMaterialTextures(
+		remedy::FbxNodeReaderContext& context,
+		const FbxSurfaceMaterial* material,
+		const SdfPath& materialPath,
+		const SdfPath& shaderPath,
+		const std::map< TfToken, TfToken >& fbxUvToUsdStNamesMap )
+	{
+		const auto materialTextures = readTextureFromMaterial( material );
+		// Create texture hookups
+		for( const auto& [ texture, target ] : materialTextures )
+		{
+			const std::string& texName = remedy::cleanName( texture->GetName() );
+			TfToken texShaderName
+				= TfToken( ( boost::format( "%1%_%2%_tex" )
+							 % helpers::FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP.at( target ) % texName )
+							   .str()
+							   .c_str() );
+			const SdfPath& texShaderPath
+				= createUsdShadeShader( context, texShaderName, materialPath, _PRIVATE_TOKENS->usdUvTexture );
+
+			const TfToken& uvMap = fbxUvToUsdStNamesMap.find( TfToken( texture->UVSet.Get() ) ) == fbxUvToUsdStNamesMap.end()
+									   ? TfToken( "st" )
+									   : fbxUvToUsdStNamesMap.at( TfToken( texture->UVSet.Get() ) );
+
+			TfToken primvarShaderStName = TfToken( std::string( "primvar_" ) + uvMap.GetString() );
+			const SdfPath& primvarShaderStPath
+				= createUsdShadeShader( context, primvarShaderStName, materialPath, _PRIVATE_TOKENS->primvarReaderFloat2 );
+
+			// Make Connections
+			const SdfPath& texturePropertyPath
+				= texShaderPath.AppendProperty( TfToken( UsdShadeTokens->inputs.GetString() + "file" ) );
+
+			{
+				FbxFileTexture* fileTexture = FbxCast< FbxFileTexture >( texture );
+				TfToken texturePath( fileTexture->GetFileName() );
+				context.CreateProperty(
+					texturePropertyPath,
+					SdfValueTypeNames->Asset,
+					VtValue( SdfAssetPath{ texturePath } ),
+					{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->shading ) } );
+			}
+
+			const SdfPath& ipColorPropertyPath
+				= texShaderPath.AppendProperty( TfToken( UsdShadeTokens->inputs.GetString() + "fallback" ) );
+			context.CreateProperty(
+				ipColorPropertyPath,
+				SdfValueTypeNames->Float4,
+				VtValue( GfVec4f( 1.0f, 0.0f, 0.0f, 1.0f ) ),
+				{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->shading ) } );
+
+			const SdfPath& ipPrimvarNamePropertyPath
+				= primvarShaderStPath.AppendProperty( TfToken( UsdShadeTokens->inputs.GetString() + "varname" ) );
+			context.CreateProperty(
+				ipPrimvarNamePropertyPath,
+				SdfValueTypeNames->String,
+				VtValue( uvMap.GetString() ),
+				{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->shading ) } );
+
+			const SdfPath& ipPrimvarFallbackPropertyPath
+				= primvarShaderStPath.AppendProperty( TfToken( UsdShadeTokens->inputs.GetString() + "fallback" ) );
+			context.CreateProperty(
+				ipPrimvarFallbackPropertyPath,
+				SdfValueTypeNames->Float2,
+				VtValue( GfVec2f( 0.0f, 0.0f ) ),
+				{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->shading ) } );
+
+			context.CreateConnection(
+				primvarShaderStPath,
+				TfToken( UsdShadeTokens->outputs.GetString() + "result" ),
+				texShaderPath,
+				TfToken( UsdShadeTokens->inputs.GetString() + "st" ),
+				SdfValueTypeNames->Float2 );
+
+			// hook to main shader attribute if it can be mapped.
+			const auto targetUSDProperty = helpers::FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP.find( target );
+			if( targetUSDProperty != helpers::FBX_MATERIAL_TEXTURE_CHANNEL_TO_USD_PROPERTY_MAP.end() )
+			{
+				context.CreateConnection(
+					texShaderPath,
+					TfToken( UsdShadeTokens->outputs.GetString() + "rgb" ),
+					shaderPath,
+					TfToken( UsdShadeTokens->inputs.GetString() + targetUSDProperty->second ),
+					SdfValueTypeNames->Token );
+			}
+			else
+			{
+				TF_WARN( "Unable to find mapping from \"%s\" to USD property\n", target.c_str() );
+			}
+		}
+	}
+
+	void readLambertMaterialProperties(
+		remedy::FbxNodeReaderContext& context,
+		const FbxSurfaceMaterial* material,
+		const SdfPath& previewShaderPath )
+	{
+		const auto* lambert = static_cast< const FbxSurfaceLambert* >( material );
+
+		// Diffuse is always written
+		context.CreateProperty(
+			helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sDiffuse ),
+			SdfValueTypeNames->Color3f,
+			VtValue( helpers::toGfVec( FbxVector4{ lambert->Diffuse.Get() } ) ),
+			{} );
+
+		// Emissive
+		if( lambert->Emissive.Modified() )
+		{
+			context.CreateProperty(
+				helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sEmissive ),
+				SdfValueTypeNames->Color3f,
+				VtValue( helpers::toGfVec( FbxVector4{ lambert->Emissive.Get() } ) ),
+				{} );
+		}
+
+		// Opacity/Transparency
+		const SdfPath& opacityPath = helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sTransparentColor );
+
+		if( const auto opacityProperty = lambert->FindProperty( "Opacity" ); opacityProperty.IsValid() )
+		{
+			const double opacity = opacityProperty.Get< double >();
+			context.CreateProperty( opacityPath, SdfValueTypeNames->Float, VtValue( static_cast< float >( opacity ) ), {} );
+		}
+	}
+
+	void readPhongMaterialProperties(
+		remedy::FbxNodeReaderContext& context,
+		const FbxSurfaceMaterial* material,
+		const SdfPath& previewShaderPath )
+	{
+		// FbxSurfacePhong inherits from FbxSurfacelambert, so this is OK
+		readLambertMaterialProperties( context, material, previewShaderPath );
+
+		const auto* phong = static_cast< const FbxSurfacePhong* >( material );
+		// Specular
+		if( phong->Specular.Modified() )
+		{
+			context.CreateProperty(
+				helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sSpecular ),
+				SdfValueTypeNames->Color3f,
+				VtValue( helpers::toGfVec( FbxColor{ phong->Specular.Get() } ) ),
+				{} );
+		}
+
+		// NOTE: This conversion is likely to be aggressively wrong
+		// There is no real consistency to how shininess gets exported by the looks of it.
+		// MotionBuilder exports 0..100, Maya 0..256, the SDK seems to assume 0..1, etc.
+		if( phong->Shininess.Modified() )
+		{
+			double shininess = phong->Shininess.Get();
+			// A hacky attempt to re-range, we cannot know what the min/maxes are used so we scale based on value
+			if( shininess > 1.0 && shininess <= 100.0 )
+			{
+				shininess /= 100.0;
+			}
+			else if( shininess > 100.0 )
+			{
+				shininess /= 256.0;
+			}
+			context.CreateProperty(
+				helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sShininess ),
+				SdfValueTypeNames->Float,
+				VtValue( static_cast< float >( 1.0 - shininess ) ),
+				{} );
+		}
+
+		// metallic, this may or may not be correct
+		if( phong->ReflectionFactor.Modified() )
+		{
+			context.CreateProperty(
+				helpers::getShaderInputPath( previewShaderPath, FbxSurfaceMaterial::sReflection ),
+				SdfValueTypeNames->Float,
+				VtValue( static_cast< float >( phong->ReflectionFactor.Get() ) ),
+				{} );
+		}
+	}
+
+	SdfPath readBaseMaterial(
+		remedy::FbxNodeReaderContext& context,
+		const FbxSurfaceMaterial* material,
+		const SdfPath& parentPath,
+		const std::map< TfToken, TfToken >& fbxUvToUsdStNamesMap )
+	{
+		const auto material_name = material->GetName();
+		TfToken materialName( remedy::cleanName( material_name ) );
+		SdfPath materialPath = parentPath.AppendChild( materialName );
+		const auto& materialTextures = readTextureFromMaterial( material );
+
+		// TODO: Rather then creating new materials, perhaps look into UsdShadeMaterial_Variations
+		const auto texturesHaveUnknownUVs = [ & ]() -> bool
+		{
+			// For any texture that has a UV map assignment that is not part of this mesh, we should create a new material
+			for( const auto& [ texture, target ] : materialTextures )
+			{
+				if( fbxUvToUsdStNamesMap.find( TfToken( texture->UVSet.Get().Buffer() ) ) == fbxUvToUsdStNamesMap.end() )
+				{
+					TF_WARN(
+						"FBX Texture \"%s\" used in material \"%s\" uses an unknown UV Set! A new unique material will be "
+						"created",
+						texture->GetName(),
+						material_name );
+					return true;
+				}
+			}
+			return false;
+		};
+
+		// Only create a new instance of the same material if any of the textures listed in the FBX point to an unknown UV map.
+		// This will end up creating a new material for this mesh binding that will bind to the default primvars:st primvar.
+		// TODO: Investigate using UsdShade Variants insteads
+		if( texturesHaveUnknownUVs() )
+		{
+			uint16_t i = 1;
+			while( context.GetPrimAtPath( materialPath ) )
+			{
+				materialName = TfToken(
+					( boost::format( "%1%__CLONE_%2%" ) % remedy::cleanName( material->GetName() ) % i ).str().c_str() );
+				materialPath = parentPath.AppendChild( materialName );
+				++i;
+			}
+		}
+
+		TfToken mainShaderName( remedy::cleanName( material->ShadingModel.Get().Buffer() ) + "Surface" );
+
+		if( context.GetPrimAtPath( materialPath ) )
+		{
+			return materialPath;
+		}
+
+		remedy::FbxNodeReaderContext::Prim& materialPrim = context.AddPrim( materialPath );
+
+		materialPrim.typeName = UsdFbxPrimTypeNames->Material;
+		materialPrim.specifier = SdfSpecifierDef;
+
+		const SdfPath& previewShaderPath
+			= createUsdShadeShader( context, mainShaderName, materialPath, _PRIVATE_TOKENS->usdPreviewSurface );
+
+		// Create connection from mainShader to material
+		context.CreateConnection(
+			previewShaderPath,
+			TfToken( UsdShadeTokens->outputsSurface ),
+			materialPath,
+			TfToken( UsdShadeTokens->outputsSurface ),
+			SdfValueTypeNames->Token );
+
+		// Set up properties based on material type
+		if( material->GetClassId().Is( FbxSurfaceLambert::ClassId ) )
+		{
+			readLambertMaterialProperties( context, material, previewShaderPath );
+		}
+
+		if( material->GetClassId().Is( FbxSurfacePhong::ClassId ) )
+		{
+			readPhongMaterialProperties( context, material, previewShaderPath );
+		}
+
+		connectMaterialTextures( context, material, materialPath, previewShaderPath, fbxUvToUsdStNamesMap );
+
+		return materialPath;
+	}
+
+	std::vector< SdfPath > getOrCreateUSDMaterials(
+		remedy::FbxNodeReaderContext& context,
+		const std::map< TfToken, TfToken >& fbxUvToUsdStNamesMap )
+	{
+		std::vector< SdfPath > vecMaterialPaths;
+		const FbxNode* fbxNode = context.GetNode();
+
+		if( !fbxNode->GetNodeAttribute() || fbxNode->GetNodeAttributeCount() == 0
+			|| fbxNode->GetNodeAttribute()->GetAttributeType() != FbxNodeAttribute::eMesh )
+		{
+			return vecMaterialPaths;
+		}
+		int material_count = fbxNode->GetSrcObjectCount< FbxSurfaceMaterial >();
+		if( !material_count )
+		{
+			return vecMaterialPaths;
+		}
+
+		const TfToken materialsContainerName( "MATERIALS" );
+		const SdfPath materialsRootPath = context.GetRootPath().AppendChild( materialsContainerName );
+		remedy::FbxNodeReaderContext::Prim& rootPrim = context.AddPrim( context.GetRootPath() );
+		rootPrim.children.push_back( materialsContainerName );
+		remedy::FbxNodeReaderContext::Prim& materialScope = context.AddPrim( materialsRootPath );
+		materialScope.specifier = SdfSpecifierDef;
+		materialScope.typeName = UsdFbxPrimTypeNames->Scope;
+
+		auto isHardwareShader = []( const FbxSurfaceMaterial* material ) -> bool
+		{
+			for( const auto implType : { FBXSDK_IMPLEMENTATION_CGFX,
+										 FBXSDK_IMPLEMENTATION_HLSL,
+										 FBXSDK_IMPLEMENTATION_SFX,
+										 FBXSDK_IMPLEMENTATION_OGS } )
+			{
+				if( GetImplementation( material, implType ) )
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+
+		for( int index = 0; index < material_count; ++index )
+		{
+			FbxSurfaceMaterial* material = fbxNode->GetMaterial( index );
+			const TfToken materialName( remedy::cleanName( material->GetName() ) );
+
+			// FBX only really support three types of materials, Phong, Lambert and Realtime shaders. The latter is currently unsupported
+			if( isHardwareShader( material ) )
+			{
+				TF_WARN(
+					"Runtime shader materials of type \"%s\" are currently unsupported, material \"%s\" will not be created\n",
+					material->GetClassId().GetName(),
+					materialName.GetText() );
+				continue;
+			}
+
+			SdfPath materialPath = readBaseMaterial( context, material, materialsRootPath, fbxUvToUsdStNamesMap );
+
+			materialScope.children.push_back( materialPath.GetNameToken() );
+			vecMaterialPaths.push_back( materialPath );
+		}
+		return vecMaterialPaths;
+	}
+
+	std::map< int, VtIntArray > readFaceSets( remedy::FbxNodeReaderContext& context )
+	{
+		const auto pMesh = static_cast< const FbxMesh* >( context.GetNode()->GetNodeAttribute() );
+		const FbxGeometryElementMaterial* layerElementMaterial = pMesh->GetElementMaterial();
+		if( layerElementMaterial == nullptr )
+		{
+			return {};
+		}
+
+		std::map< int, VtIntArray > faceSets;
+
+		for( int i = 0; i < layerElementMaterial->GetIndexArray().GetCount(); ++i )
+		{
+			int faceMatInd = layerElementMaterial->GetIndexArray()[ i ];
+			if( faceSets.find( faceMatInd ) == faceSets.end() )
+			{
+				faceSets.emplace( faceMatInd, VtIntArray() );
+			}
+			faceSets[ faceMatInd ].push_back( i );
+		}
+		return faceSets;
+	}
+
+	void addSubGeom(
+		remedy::FbxNodeReaderContext& context,
+		std::map< int, VtIntArray > faceSets,
+		std::vector< SdfPath > vecMaterials )
+	{
+		int subSetIndex = 1;
+		std::map< int, VtIntArray >::iterator it;
+		for( it = faceSets.begin(); it != faceSets.end(); ++it, ++subSetIndex )
+		{
+			const TfToken subSetName( ( boost::format( "SUBSET_%1%" ) % vecMaterials[ it->first ].GetName() ).str().c_str() );
+			const SdfPath& subSetPath = context.GetPath().AppendChild( subSetName );
+			remedy::FbxNodeReaderContext::Prim& subSetPrim = context.AddPrim( subSetPath );
+
+			subSetPrim.typeName = UsdFbxPrimTypeNames->GeomSubset;
+			subSetPrim.specifier = SdfSpecifierDef;
+			context.GetOrAddPrim().children.push_back( subSetName );
+
+			subSetPrim.metadata.emplace(
+				UsdTokens->apiSchemas,
+				VtValue( SdfTokenListOp::Create( { UsdFbxSchemaTokens->MaterialBindingAPI } ) ) );
+
+			const SdfPath& subGeomFamNamePropertyPath = subSetPath.AppendProperty( UsdGeomTokens->familyName );
+			context.CreateUniformProperty(
+				subGeomFamNamePropertyPath,
+				SdfValueTypeNames->Token,
+				VtValue( UsdShadeTokens->materialBind ) );
+
+			const SdfPath& subGeomIndicesPropertyPath = subSetPath.AppendProperty( UsdGeomTokens->indices );
+			context.CreateProperty( subGeomIndicesPropertyPath, SdfValueTypeNames->IntArray, VtValue( it->second ) );
+
+			context.CreateRelationship( subSetPath.AppendProperty( UsdShadeTokens->materialBinding ), vecMaterials[ it->first ] );
+		}
+	}
+
+	std::map< TfToken, std::pair< TfToken, VtVec2fArray > > getMeshTextureCoordinates( const FbxNode* fbxNode )
+	{
+		std::map< TfToken, std::pair< TfToken, VtVec2fArray > > result;
+		// Special case for UVs as we may end up with or or more properties per UV channel
+		// Scoped because do not need mesh after this anymore
+		{
+			const auto mesh = static_cast< const FbxMesh* >( fbxNode->GetNodeAttribute() );
+			FbxProperty currentUVSet = fbxNode->FindProperty( "currentUVSet", false );
+
+			const int layerCount = mesh->GetUVLayerCount();
+
+			for( int i = 0; i != layerCount; ++i )
+			{
+				const auto layer = mesh->GetLayer( i );
+				const auto layerElement = layer->GetUVs();
+
+				if( !layerElement || layerElement->GetMappingMode() != FbxLayerElement::eByPolygonVertex
+					|| layerElement->GetReferenceMode() == FbxLayerElement::eIndex )
+				{
+					continue;
+				}
+				// Add the CurrentUVSet as the default st coordinates
+				if( currentUVSet.IsValid() && std::string( layerElement->GetName() ) == currentUVSet.Get< FbxString >().Buffer() )
+				{
+					result.emplace(
+						TfToken( "DEFAULT" ),
+						std::pair{ TfToken( "st" ), converters::meshTexCoords( mesh, layerElement ) } );
+				}
+				TfToken propertyName( std::string( "st_" ) + remedy::cleanName( layerElement->GetName() ) );
+				result.emplace(
+					TfToken( layerElement->GetName() ),
+					std::pair{ propertyName, converters::meshTexCoords( mesh, layerElement ) } );
+			}
+		}
+		return result;
+	}
+
 	void readMesh( remedy::FbxNodeReaderContext& context )
 	{
 		TF_DEBUG( USDFBX_FBX_READERS ).Msg( "UsdFbx::FbxReaders - readMesh for \"%s\"\n", context.GetNode()->GetName() );
+
 		context.GetOrAddPrim().typeName = UsdFbxPrimTypeNames->Mesh;
+		TfTokenVector apiSchemas;
 
 		const FbxNode* fbxNode = context.GetNode();
 		if( !fbxNode->GetNodeAttribute() || fbxNode->GetNodeAttributeCount() == 0
 			|| fbxNode->GetNodeAttribute()->GetAttributeType() != FbxNodeAttribute::eMesh )
 		{
 			return;
+		}
+
+		auto textureCoordinates = getMeshTextureCoordinates( fbxNode );
+		for( const auto& [ fbxUvName, usdUvData ] : textureCoordinates )
+		{
+			context.CreateProperty(
+				TfToken( _PRIVATE_TOKENS->primvarsPrefix.GetString() + usdUvData.first.GetString() ),
+				SdfValueTypeNames->TexCoord2fArray,
+				// TODO - We technically do not required to keep track of the actual coordinates themselves anymore past this point, so the copy constructor is unfortunately unnecessary
+				VtValue( usdUvData.second ),
+				nullptr,
+				{ { UsdGeomTokens->interpolation, VtValue( UsdGeomTokens->faceVarying ) },
+				  helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ) } );
 		}
 
 		// Varying/Interpolated properties
@@ -1052,33 +1587,52 @@ namespace
 			VtValue( converters::meshPoints( context.GetNode() ) ),
 			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ) } );
 
-		// TODO - Post 1.0: potentially use primvars:normals/tangents instead.
-		// primvars:normals/tangents takes precendence over
-		// UsdGeomPointBased::normals/tangents
 		context.CreateProperty(
-			UsdGeomTokens->normals,
+			TfToken( _PRIVATE_TOKENS->primvarsPrefix.GetString() + UsdGeomTokens->normals.GetString() ),
 			SdfValueTypeNames->Normal3fArray,
 			VtValue( converters::meshNormals( context.GetNode() ) ),
 			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ),
 			  { UsdGeomTokens->interpolation, VtValue( UsdGeomTokens->faceVarying ) } } );
 
 		context.CreateProperty(
-			UsdGeomTokens->tangents,
+			TfToken( _PRIVATE_TOKENS->primvarsPrefix.GetString() + UsdGeomTokens->tangents.GetString() ),
 			SdfValueTypeNames->Normal3fArray,
 			VtValue( converters::meshTangents( context.GetNode() ) ),
 			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ),
 			  { UsdGeomTokens->interpolation, VtValue( UsdGeomTokens->faceVarying ) } } );
 
-		if( helpers::hasVertexColors( fbxNode ) )
+		const VtIntArray faceVertexIndices = converters::meshFaceVertexIndices( context.GetNode() );
+
+		// colorSetInfo contains colorset name and vertex colors, the first colorset is used for vertex color.
+		const std::vector< std::pair< std::string, VtVec3fArray > > colorSetInfo
+			= converters::meshVertexColors( context.GetNode(), faceVertexIndices );
+
+		if( colorSetInfo.size() > 1 )
 		{
+			TF_DEBUG( USDFBX ).Msg(
+				"More than one colorsets found, first colorset will be used for displayColor primvar property." );
+		}
+
+		unsigned char colorsetIndex = 0;
+		for( const auto& [ name, colors ] : colorSetInfo )
+		{
+			TfToken propertyName = UsdGeomTokens->primvarsDisplayColor;
+			if( colorsetIndex > 0 )
+			{
+				propertyName = TfToken(
+					( boost::format( "%1%_%2%" ) % UsdGeomTokens->primvarsDisplayColor.GetString() % name ).str().c_str() );
+			}
+
 			context.CreateProperty(
-				UsdGeomTokens->primvarsDisplayColor,
+				propertyName,
 				SdfValueTypeNames->Color3f,
-				VtValue( converters::meshVertexColors( context.GetNode() ) ),
+				VtValue( colors ),
 				nullptr,
 				// TODO - Post 1.0: Add fbx property for color animation
 				{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ),
 				  { UsdGeomTokens->interpolation, VtValue( UsdGeomTokens->vertex ) } } );
+
+			++colorsetIndex;
 		}
 
 		context.CreateProperty(
@@ -1090,24 +1644,49 @@ namespace
 		context.CreateProperty(
 			UsdGeomTokens->faceVertexIndices,
 			SdfValueTypeNames->IntArray,
-			VtValue( converters::meshFaceVertexIndices( context.GetNode() ) ),
+			VtValue( faceVertexIndices ),
 			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ) } );
+
+		std::map< TfToken, TfToken > fbxUvToUsdStNamesMap;
+		std::transform(
+			textureCoordinates.cbegin(),
+			textureCoordinates.cend(),
+			std::inserter( fbxUvToUsdStNamesMap, fbxUvToUsdStNamesMap.begin() ),
+			[]( const auto& pair ) {
+				return std::pair{ pair.first, pair.second.first };
+			} );
+		std::vector< SdfPath > vecMaterials = getOrCreateUSDMaterials( context, fbxUvToUsdStNamesMap );
+
+		//uniform token subsetFamily:materialBind:familyType = "partition"
+		if( vecMaterials.size() > 1 )
+		{
+			context.CreateUniformProperty(
+				TfToken( "subsetFamily:materialBind:familyType" ),
+				SdfValueTypeNames->Token,
+				VtValue( "partition" ) );
+		}
+
+		std::map< int, VtIntArray > faceSets = readFaceSets( context );
+		if( vecMaterials.size() > 1 )
+		{
+			addSubGeom( context, faceSets, vecMaterials );
+		}
+
+		if( vecMaterials.size() )
+		{
+			apiSchemas.push_back( UsdFbxSchemaTokens->MaterialBindingAPI );
+		}
 
 		if( const auto* skin = helpers::getSkin( static_cast< const FbxMesh* >( fbxNode->GetNodeAttribute() ) ) )
 		{
-			context.GetOrAddPrim().metadata.emplace(
-				UsdTokens->apiSchemas,
-				VtValue( SdfTokenListOp::Create( { TfToken( "SkelBindingAPI" ) } ) ) );
+			apiSchemas.push_back( UsdFbxSchemaTokens->SkelBindingAPI );
 
 			const auto& [ joints, jointIndices, jointWeights, elementSize, skeletonPath ]
 				= converters::getBindingData( skin, static_cast< const FbxMesh* >( fbxNode->GetNodeAttribute() ) );
 
 			if( joints.empty() )
 			{
-				TF_WARN(
-					"A skin for \"%s\" has been defined, but no joints could be "
-					"extracted!",
-					fbxNode->GetName() );
+				TF_WARN( "A skin for \"%s\" has been defined, but no joints could be extracted!", fbxNode->GetName() );
 			}
 			else
 			{
@@ -1159,37 +1738,9 @@ namespace
 			}
 		}
 
-		// Special case for UVs as we may end up with or or more properties per UV
-		// channel Scoped because do not need mesh after this anymore
-		{
-			const auto mesh = static_cast< const FbxMesh* >( fbxNode->GetNodeAttribute() );
-			const int layerCount = mesh->GetLayerCount();
-			for( int i = 0; i != layerCount; ++i )
-			{
-				const auto layer = mesh->GetLayer( i );
-
-				const auto layerElement = layer->GetUVs();
-				if( !layerElement || layerElement->GetMappingMode() != FbxLayerElement::eByPolygonVertex
-					|| layerElement->GetReferenceMode() == FbxLayerElement::eIndex )
-				{
-					continue;
-				}
-				std::string suffix = layerCount > 1 ? ( boost::format( "_%1%" ) % layerElement->GetName() ).str() : "";
-				context.CreateProperty(
-					TfToken( ( boost::format( "primvars:st%1%" ) % suffix ).str().c_str() ),
-					SdfValueTypeNames->TexCoord2fArray,
-					VtValue( converters::meshTexCoords( context.GetNode(), i ) ),
-					nullptr,
-					{ { UsdGeomTokens->interpolation, VtValue( UsdGeomTokens->faceVarying ) },
-					  helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ) } );
-			}
-		}
-
 		// This property does not matter when dealing with pre-defined normals
-		// It is essentially a hint to the renderer that if normals need to be
-		// calculated on the fly, which orientation to take We set it now to
-		// rightHanded as that is the default, it's ignored if normals are authored on
-		// the layer (at least in most Hydra renderers)
+		// It is essentially a hint to the renderer that if normals need to be calculated on the fly, which orientation to take
+		// We set it now to rightHanded as that is the default, it's ignored if normals are authored on the layer (at least in most Hydra renderers)
 		context.CreateUniformProperty(
 			UsdGeomTokens->orientation,
 			SdfValueTypeNames->Token,
@@ -1201,6 +1752,16 @@ namespace
 			SdfValueTypeNames->Token,
 			VtValue( UsdGeomTokens->none ),
 			{ helpers::getDisplayGroupMetadata( UsdFbxDisplayGroupTokens->geometry ) } );
+
+		if( vecMaterials.size() == 1 )
+		{
+			context.CreateRelationship( UsdShadeTokens->materialBinding, vecMaterials[ 0 ] );
+		}
+
+		if( !apiSchemas.empty() )
+		{
+			context.GetOrAddPrim().metadata.emplace( UsdTokens->apiSchemas, VtValue( SdfTokenListOp::Create( apiSchemas ) ) );
+		}
 	}
 
 	void readSkeletonAnimation( remedy::FbxNodeReaderContext& context )
@@ -1228,7 +1789,7 @@ namespace
 			return;
 		}
 
-		const TfToken skelAnimationPrimName( std::string( "Animation" ) + fbxNode->GetName() );
+		const TfToken skelAnimationPrimName( std::string( "Animation" ) + remedy::cleanName( fbxNode->GetName() ) );
 
 		const auto parentPath = context.GetPath().GetParentPath();
 		const auto skelAnimPrimPath = parentPath.AppendChild( skelAnimationPrimName );
@@ -1415,7 +1976,15 @@ namespace
 
 		// Relationship to the skeleton
 		SdfPath pathToSkeleton( "/ROOT" );
-		pathToSkeleton = pathToSkeleton.AppendChild( TfToken( fbxNode->GetName() ) );
+		pathToSkeleton = pathToSkeleton.AppendChild( TfToken( remedy::cleanName( fbxNode->GetName() ) ) );
+		if( !context.GetPrimAtPath( pathToSkeleton ).has_value() )
+		{
+			TF_WARN(
+				"Unable to find a skeleton at path <%s>! SkelAnimation <%s> will remain unbound!\n",
+				pathToSkeleton.GetText(),
+				skelAnimPrimPath.GetText() );
+			return;
+		}
 		context.CreateRelationship(
 			pathToSkeleton.AppendProperty( UsdSkelTokens->skelAnimationSource ),
 			skelAnimPrimPath,
@@ -1441,7 +2010,7 @@ namespace
 
 		const auto pSkeleton = static_cast< const FbxSkeleton* >( fbxNode->GetNodeAttribute() );
 
-		const TfToken skeletonPrimName( fbxNode->GetName() );
+		const TfToken skeletonPrimName( remedy::cleanName( fbxNode->GetName() ) );
 
 		// Skip any child skeletons, they are handled when the first joint is
 		// encountered
@@ -1796,7 +2365,7 @@ remedy::FbxNodeReaderContext::Property& remedy::FbxNodeReaderContext::CreateRela
 	const SdfPath& to,
 	MetadataMap&& metadata )
 {
-	// SdfValueTypeNames and the defaultValue are just fill in values, they do not
+	// SdfValueTypeNames and the defaultValue are just fill in values, they do not matter in the end
 	// matter in the end
 	auto& prop
 		= CreateProperty( from, SdfValueTypeNames->Token, VtValue(), nullptr, std::move( metadata ), SdfVariabilityUniform );
@@ -1820,10 +2389,12 @@ remedy::FbxNodeReaderContext::Property& remedy::FbxNodeReaderContext::CreateConn
 	const SdfPath sourcePropertyPath = sourcePath.AppendProperty( sourceAttribute );
 	const SdfPath targetPropertyPath = targetPath.AppendProperty( targetAttribute );
 
-	auto& sourceProperty = CreateProperty( sourcePropertyPath, valueType, VtValue(), nullptr, MetadataMap( metadata ) );
+	auto& targetProperty = CreateProperty( targetPropertyPath, targetTypeName, VtValue(), nullptr, MetadataMap( metadata ) );
 	// copying metadata here, it's moved later
-	sourceProperty.metadata[ SdfFieldKeys->ConnectionPaths ] = VtValue( SdfPathListOp::Create( { targetPropertyPath } ) );
+	targetProperty.metadata[ SdfFieldKeys->ConnectionPaths ] = VtValue( SdfPathListOp::CreateExplicit( { sourcePropertyPath } ) );
+	targetProperty.hasConnection = true;
 
-	CreateProperty( sourcePropertyPath, targetTypeName, VtValue(), nullptr, std::move( metadata ) );
+	auto& sourceProperty = CreateProperty( sourcePropertyPath, targetTypeName, VtValue(), nullptr, std::move( metadata ) );
+	sourceProperty.hasConnection = true;
 	return sourceProperty;
 }

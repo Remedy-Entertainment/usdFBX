@@ -9,6 +9,8 @@ from . import (
     TransformableNode,
     Transform,
     Property,
+    LambertMaterial,
+    PhongMaterial,
 )
 
 
@@ -82,8 +84,9 @@ def validate_coordinate_mapping(
 
 
 def write_layer_element(layer_element, layer_data, reference_mode, point_mapping):
-    direct_array = layer_element.GetDirectArray()
-    [direct_array.Add(n) for n in layer_data]
+    if layer_data:
+        direct_array = layer_element.GetDirectArray()
+        [direct_array.Add(n) for n in layer_data]
     if reference_mode != fbx.FbxLayerElement.EReferenceMode.eDirect:
         index_array = layer_element.GetIndexArray()
         [index_array.Add(idx) for idx in point_mapping]
@@ -159,6 +162,55 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
             uv_set.point_mapping,
         )
 
+    # Materials
+    material_element = fbx_mesh.CreateElementMaterial()
+    material_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByPolygon)
+    material_element.SetReferenceMode(fbx.FbxLayerElement.EReferenceMode.eIndexToDirect)
+    material_type_map = {
+        LambertMaterial: fbx.FbxSurfaceLambert,
+        PhongMaterial: fbx.FbxSurfacePhong,
+    }
+    material_mapping = [face for _, faces in mesh.materials for face in faces]
+    for material, _ in mesh.materials:
+        fbx_material = material_type_map[type(material)].Create(manager, material.name)
+
+        fbx_material.Diffuse.Set(fbx.FbxDouble3(*material.diffuse))
+        fbx_material.Emissive.Set(fbx.FbxDouble3(*material.emissive))
+        fbx_material.Ambient.Set(fbx.FbxDouble3(*material.ambient))
+        fbx_material.TransparentColor.Set(fbx.FbxDouble3(*material.transparency))
+        fbx_material.TransparencyFactor.Set(material.transparency_factor)
+
+        if type(material) is PhongMaterial:
+            fbx_material.Shininess.Set(material.shininess)
+            fbx_material.Reflection.Set(fbx.FbxDouble3(*material.reflection))
+            fbx_material.ReflectionFactor.Set(material.reflection_factor)
+            fbx_material.Specular.Set(fbx.FbxDouble3(*material.specular))
+            fbx_material.SpecularFactor.Set(material.specular_factor)
+
+        for texture in material.textures:
+            fbx_texture = fbx.FbxFileTexture.Create(manager, "")
+            fbx_texture.SetFileName(str(texture.path))
+            fbx_texture.SetName(texture.name)
+            fbx_texture.SetTextureUse(fbx.FbxTexture.ETextureUse.eStandard)
+            fbx_texture.SetMappingType(fbx.FbxTexture.EMappingType.eUV)
+            fbx_texture.SetMaterialUse(fbx.FbxFileTexture.EMaterialUse.eModelMaterial)
+            fbx_texture.SetSwapUV(False)
+            fbx_texture.SetAlphaSource(fbx.FbxTexture.EAlphaSource.eNone)
+            fbx_texture.SetTranslation(0.0, 0.0)
+            fbx_texture.SetScale(1.0, 1.0)
+            fbx_texture.SetRotation(0.0, 0.0)
+            fbx_texture.UVSet.Set(texture.uv_set)
+            getattr(fbx_material, texture.channel).ConnectSrcObject(fbx_texture)
+
+        fbx_node.AddMaterial(fbx_material)
+
+    write_layer_element(
+        material_element,
+        [],  # Direct Array for material elements aren't used anymore
+        fbx.FbxLayerElement.EReferenceMode.eIndexToDirect,
+        material_mapping,
+    )
+
     # Vertex Colors, always writing one color per vertex.
     for color_set in mesh.vertex_colors:
         validate_coordinate_mapping(
@@ -169,12 +221,12 @@ def create_mesh(manager: fbx.FbxManager, mesh: Mesh):
             mesh.points,
         )
         color_element = fbx_mesh.CreateElementVertexColor()
-        color_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByControlPoint)
-        color_element.SetReferenceMode(fbx.FbxLayerElement.EReferenceMode.eDirect)
-
-        colors = [
-            fbx.FbxColor(*color_set.coordinates[id]) for id in color_set.point_mapping
-        ]
+        color_element.SetName(color_set.name)
+        color_element.SetMappingMode(fbx.FbxLayerElement.EMappingMode.eByPolygonVertex)
+        color_element.SetReferenceMode(
+            fbx.FbxLayerElement.EReferenceMode.eIndexToDirect
+        )
+        colors = [fbx.FbxColor(*c) for c in color_set.coordinates]
         write_layer_element(
             color_element,
             colors,

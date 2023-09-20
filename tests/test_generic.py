@@ -1,9 +1,11 @@
-from numbers import Number
+import string
+
 import pytest
 
 import FbxCommon as fbx
 
 from pxr import Usd, Gf
+
 from data import scenebuilder, TransformableNode, Property
 from helpers import create_FbxTime
 
@@ -112,7 +114,6 @@ def test_user_properties(user_property_fbx, root_prim_name):
         display_group == "User"
     ), f"expected 'User' for displayGroup metadata, got '{display_group}' instead"
 
-    # NOTE: There's something funky with LONG values
     assert expected_value == prop.Get()
 
 
@@ -135,3 +136,24 @@ def test_bugfix_GetDisplayGroup(user_property_fbx, root_prim_name):
     assert (
         display_group == "User"
     ), f"expected 'User' for displayGroup metadata, got '{display_group}' instead"
+
+
+@pytest.fixture(
+    params=[(f"foo{c}bar", "foo_bar") for c in string.punctuation + string.whitespace]
+)
+def node_name_fbx(fbx_defaults, request):
+    output_dir, manager, scene, fbx_file_format = fbx_defaults
+    input_name, expected_name = request.param
+    with scenebuilder.SceneBuilder(manager, scene, output_dir) as builder:
+        builder.settings.file_format = fbx_file_format
+        builder.nodes.append(TransformableNode(input_name))
+    yield str(builder.settings.file_path), builder.nodes, expected_name
+
+
+def test_validPrimNames(node_name_fbx, root_prim_name):
+    file_path, nodes, expected_name = node_name_fbx
+    stage = Usd.Stage.Open(file_path)
+
+    target_prim = stage.GetPrimAtPath(f"/{root_prim_name}/{expected_name}")
+
+    assert target_prim, f"unable to find prim at path /{root_prim_name}/{expected_name}"

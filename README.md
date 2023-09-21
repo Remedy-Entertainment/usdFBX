@@ -13,7 +13,7 @@ The plugin is based on the Alembic example bundled with the USD sources so there
     - `FbxNodeAttribute::eMesh`
     - `FbxNodeAttribute::eSkeleton`
     - `FbxNodeAttribute::eCamera`
-2) Materials are not yet supported but are on the near future roadmap
+2) FBX Phong/Lambert materials are converted to UsdPreviewSurface configurations, hardware shaders are not currently supported
 3) Custom FBX Properties convert into USD properties prefixed with the `userProperties:` property namespace. The `Custom` Metadatatum will also be set for these
 4) While access to the fileformat itself by USD is multithreaded, any dealings with the FBX SDK itself is single threaded at the moment
 5) Per bone animated properties are recorded to a set of custom properties onto a `UsdSkelAnim` prim
